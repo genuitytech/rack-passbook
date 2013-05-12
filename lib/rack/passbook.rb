@@ -4,6 +4,8 @@ require 'rack/contrib'
 require 'sinatra/base'
 require 'sinatra/param'
 require 'rack'
+require 'base64'
+require 'aws/s3'
 
 require 'sequel'
 
@@ -21,6 +23,7 @@ module Rack
 
     configure do
       Sequel.extension :core_extensions, :migration, :pg_hstore, :pg_hstore_ops
+      mime_type :pkpass, 'application/vnd.apple.pkpass'
 
       if ENV['DATABASE_URL']
         DB = Sequel.connect(ENV['DATABASE_URL'])
@@ -28,21 +31,21 @@ module Rack
       end
     end
 
-    before do
-      content_type :json
-    end
-
     # Get the latest version of a pass.
     get '/passes/:pass_type_identifier/:serial_number/?' do
-      @pass = Pass.filter(pass_type_identifier: params[:pass_type_identifier], serial_number: params[:serial_number]).first
+      content_type :pkpass
+
+      serial_number = params[:serial_number]
+      pass_type_identifier = params[:pass_type_identifier]
+      @pass = Pass.filter(pass_type_identifier: pass_type_identifier, serial_number: serial_number).first
       halt 404 if @pass.nil?
       filter_authorization_for_pass!(@pass)
-  
+
       last_modified @pass.updated_at.utc
 
-      @pass.to_json
+      Dubai::Passbook.certificate, Dubai::Passbook.password = ENV["PASSBOOK_CERT"], ENV["PASSBOOK_CERT_PASSWORD"]
+      Dubai::Passbook::Pass.new(pass_files_from_s3(pass_type_identifier, serial_number)).pkpass.string
     end
-
 
     # Get the serial numbers for passes associated with a device.
     # This happens the first time a device communicates with our web service.
@@ -50,6 +53,8 @@ module Rack
     # web service for the serial numbers of passes that have changed since
     # a given update tag (timestamp).
     get '/devices/:device_library_identifier/registrations/:pass_type_identifier/?' do
+      content_type :json
+
       @passes = Pass.filter(pass_type_identifier: params[:pass_type_identifier]).join(Registration.dataset, device_library_identifier: params[:device_library_identifier])
       halt 404 if @passes.empty?
 
@@ -104,6 +109,13 @@ module Rack
 
     def filter_authorization_for_pass!(pass)
       halt 401 if request.env['HTTP_AUTHORIZATION'] != "ApplePass #{pass.authentication_token}"
+    end
+
+    def pass_files_from_s3(serial_number, pass_type_identifier)
+      AWS::S3::Bucket.objects(ENV["AWS_S3_BUCKET"], :prefix => "passes/#{pass_type_identifier}/#{serial_number}").inject({}) do |memo, obj|
+        memo[obj.key.split("/").last] = obj.value
+        memo
+      end
     end
   end
 end

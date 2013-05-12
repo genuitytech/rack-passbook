@@ -18,6 +18,8 @@ Gem::Specification.new do |s|
   s.add_dependency "rack", "~> 1.4"
   s.add_dependency "sinatra", "~> 1.3"
   s.add_dependency "sequel", "~> 3.37"
+  s.add_dependency "dubai", ">= 0.0.4"
+  s.add_dependency "aws-s3", ">= 0.6.3"
 
   s.files         = Dir["./**/*"].reject { |file| file =~ /\.\/(bin|example|log|pkg|script|spec|test|vendor)/ }
   s.test_files    = `git ls-files -- {test,spec,features}/*`.split("\n")
